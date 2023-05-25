@@ -8,13 +8,13 @@ namespace PubSub
 {
     public class Hub
     {
-        internal List<Handler> _handlers = new List<Handler>();
-        internal object _locker = new object();
+        internal readonly List<Handler> _handlers = new List<Handler>();
+        internal readonly object _locker = new object();
         private static Hub _default;
 
         public static Hub Default => _default ?? (_default = new Hub());
         
-        public void Publish<T>(T data = default(T))
+        public void Publish<T>(T data = default)
         {
             foreach (var handler in GetAliveHandlers<T>())
             {
@@ -79,6 +79,10 @@ namespace PubSub
             Unsubscribe(this);
         }
 
+        /// <summary>
+        ///     Allow unsubscribing directly to this Hub.
+        /// </summary>
+        /// <param name="handler"></param>
         public void Unsubscribe(Delegate handler)
         {
             Unsubscribe(this, handler);
@@ -107,23 +111,13 @@ namespace PubSub
         {
             Unsubscribe<T>(this);
         }
-
-        /// <summary>
-        ///     Allow unsubscribing directly to this Hub.
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="handler"></param>
-        public void Unsubscribe<T>(Delegate handler)
-        {
-            Unsubscribe(this, handler);
-        }
-
+        
         public void Unsubscribe<T>(object subscriber, Delegate handler = null)
         {
             lock (_locker)
             {
                 var query = _handlers.Where(a => !a.Sender.IsAlive ||
-                                                a.Sender.Target.Equals(subscriber) && a.Type == typeof(T));
+                                                (a.Sender.Target.Equals(subscriber) && a.Type == typeof(T)));
 
                 if (handler != null)
                     query = query.Where(a => a.Action.Equals(handler));
@@ -142,35 +136,19 @@ namespace PubSub
         {
             lock (_locker)
             {
-                foreach (var h in _handlers)
-                {
-                    if (Equals(h.Sender.Target, subscriber) &&
-                         typeof(T) == h.Type)
-                    {
-                        return true;
-                    }
-                }
+                return _handlers.Any(h => Equals(h.Sender.Target, subscriber) &&
+                                          typeof(T) == h.Type);
             }
-
-            return false;
         }
 
         public bool Exists<T>(object subscriber, Action<T> handler)
         {
             lock (_locker)
             {
-                foreach (var h in _handlers)
-                {
-                    if (Equals(h.Sender.Target, subscriber) &&
-                         typeof(T) == h.Type &&
-                         h.Action.Equals(handler))
-                    {
-                        return true;
-                    }
-                }
+                return _handlers.Any(h => Equals(h.Sender.Target, subscriber) &&
+                                          typeof(T) == h.Type &&
+                                          h.Action.Equals(handler));
             }
-
-            return false;
         }
 
         private void SubscribeDelegate<T>(object subscriber, Delegate handler)
@@ -191,7 +169,11 @@ namespace PubSub
         private List<Handler> GetAliveHandlers<T>()
         {
             PruneHandlers();
-            return _handlers.Where(h => h.Type.GetTypeInfo().IsAssignableFrom(typeof(T).GetTypeInfo())).ToList();
+
+            lock (_locker)
+            {
+                return _handlers.Where(h => h.Type.GetTypeInfo().IsAssignableFrom(typeof(T).GetTypeInfo())).ToList();
+            }
         }
 
         private void PruneHandlers()
